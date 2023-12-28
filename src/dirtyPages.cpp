@@ -1,92 +1,121 @@
 #include "dirtyPages.hpp"
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <iomanip>
-#include <cstring>
-#include <bitset>
-#include <sys/types.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
-void DirtyPages::open_proc_files(void) {
+#define LEN 150
+#define BUFFER 4096
+  
+DirtyPages::DirtyPages() {
+  pid = getpid();
+  start_virt_addr = 0;
+  end_virt_addr = 0;
 
+  get_virtual_addr_range();
+  assert(start_virt_addr != 0 && end_virt_addr != 0);
 
+  printf("start_virt_addr = %#llx\n", start_virt_addr);
+  printf("end_virt_addr = %#llx\n", end_virt_addr);
 }
 
-void DirtyPages::close_proc_files(void) {
-  close(mappes_fd);
-  close(page_map_fd);
+void DirtyPages::get_virtual_addr_range(void) {
+  char maps_file[LEN];
+  FILE *fd;
+  snprintf(maps_file, LEN, "/proc/%d/maps", pid);
+
+  fd = fopen(maps_file, "r");
+  if (fd == NULL) {
+    perror("Error opening file");
+    return;
+  }
+
+  char *line = NULL;
+  size_t len = 0;
+  ssize_t nread;
+
+  // Read the file line by line
+  while ((nread = getline(&line, &len, fd)) != -1) {
+    // Check if the substring is present in the line
+    if (strstr(line, "/mnt/fmap/") != NULL) {
+      printf("Found: %s", line);
+      fclose(fd);
+      break;
+    }
+  }
+
+  if (line == NULL) {
+    perror("String pattern not found");
+    return;
+  }
+
+  // The line is in the form
+  // 555786a3e000-555786a40000 r--p 00000000 103:02 30933618 /mnt/fmap/.uxzs
+  char *token = strtok(line, "-"); // Tokenize based on "-"
+
+  if (token != NULL) {
+    // Convert the hexadecimal string to an unsigned long long
+    start_virt_addr = strtoull(token, NULL, 16);
+  } else {
+    perror("Error parsing the line (start address)\n");
+    return;
+  }
+
+  // Tokenize based on " "
+  token = strtok(NULL, " ");
+  if (token != NULL) {
+    // Convert the hexadecimal string to an unsigned long long
+    end_virt_addr = strtoull(token, NULL, 16);
+  } else {
+    perror("Error parsing the line (end address)\n");
+    return;
+  }
+
+  if (line != NULL) {
+    free(line);
+  }
 }
 
+void DirtyPages::print_dirty_pages(void) {
+  char pagemap_path[LEN];
+  snprintf(pagemap_path, sizeof(pagemap_path), "/proc/%d/pagemap", pid);
 
-using namespace std;
+  int pagemap_fd = open(pagemap_path, O_RDONLY);
+  if (pagemap_fd == -1) {
+    perror("Error opening pagemap file");
+    return;
+  }
+
+  // Calculate the number of pages in the range
+  size_t num_pages = (end_virt_addr - start_virt_addr) / PAGE_SIZE;
+
+  // Read corresponding pagemap entries
+  for (size_t i = 0; i < num_pages; ++i) {
+    unsigned long long offset = (start_virt_addr / PAGE_SIZE + i) * sizeof(uint64_t);
+    lseek(pagemap_fd, offset, SEEK_SET);
+
+    uint64_t pagemap_entry;
+    ssize_t read_size = read(pagemap_fd, &pagemap_entry, sizeof(pagemap_entry));
+
+    if (read_size != sizeof(pagemap_entry)) {
+      fprintf(stderr, "Error reading pagemap entry for address %llx\n", start_virt_addr + i * PAGE_SIZE);
+      close(pagemap_fd);
+      return;
+    }
+
+    // Check if the page is dirty
+    if (isPageDirty(pagemap_entry)) {
+      printf("Page at address %llx is dirty.\n", start_virt_addr + i * PAGE_SIZE);
+    }
+  }
+
+  close(pagemap_fd);
+}
 
 // Function to check if a page is dirty
 bool DirtyPages::isPageDirty(unsigned long long pagemap_entry) {
     return (pagemap_entry & (1ULL << 55)) != 0;
-}
-
-// Function to extract page frame number from pagemap entry
-unsigned long long DirtyPages::getPageFrameNumber(unsigned long long pagemap_entry) {
-    return pagemap_entry & ((1ULL << 55) - 1);
-}
-
-//void DirtyPages::print_dirty_pages() {
-//  // Get the process ID of the current process
-//  pid_t pid = getpid();
-//
-//  // Build the paths for maps and pagemap files
-//  // Maps contains the virtual address space while the pagemaps
-//  // contains the physical pages
-//  stringstream maps_path;
-//  maps_path << "/proc/" << pid << "/maps";
-//
-//  stringstream pagemap_path;
-//  pagemap_path << "/proc/" << pid << "/pagemap";
-//
-//  // Open maps file for reading
-//  ifstream maps_file(maps_path.str());
-//  if (!maps_file.is_open()) {
-//    cerr << "Error: Unable to open " << maps_path.str() << endl;
-//    return;
-//  }
-//
-//  // Open pagemap file for reading
-//  ifstream pagemap_file(pagemap_path.str(), ios::binary);
-//  if (!pagemap_file.is_open()) {
-//    cerr << "Error: Unable to open " << pagemap_path.str() << endl;
-//    return;
-//  }
-//
-//  // Read maps file line by line
-//  string line;
-//  while (getline(maps_file, line)) {
-//    istringstream iss(line);
-//
-//    // Extract start and end address of the mapped region
-//    unsigned long long start_addr, end_addr;
-//    char dash;
-//    iss >> hex >> start_addr >> dash >> end_addr;
-//
-//    size_t num_pages = (end_addr - start_addr) / getpagesize();
-//    // Calculate the number of pages in the range
-//
-//    // Read corresponding pagemap entries
-//    for (size_t i = 0; i < num_pages; ++i) {
-//      unsigned long long pagemap_entry;
-//      // Seek to the position in the pagemap file corresponding to the current page
-//      pagemap_file.seekg((start_addr / getpagesize() + i) * sizeof(pagemap_entry), ios::beg);
-//      pagemap_file.read(reinterpret_cast<char*>(&pagemap_entry), sizeof(pagemap_entry));
-//
-//      // Check if the page is dirty
-//      if (isPageDirty(pagemap_entry)) {
-//        cout << "Page at address " << hex << start_addr + i * getpagesize() << " is dirty." << endl;
-//      }
-//    }
-//  }
-//}
-//
-  
-void DirtyPages::get_virtual_address_range(void) {
-  page_map_fd = open()
 }

@@ -3,9 +3,12 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <cstdlib>
+#include <string.h>
+#include "dirtyPages.hpp"
 
 #define FILE_NAME "/mnt/fmap/file.txt"
-#define FILE_SIZE (10 * 1024 * 1024 * 1024LU)
+#define FILE_SIZE (2 * 1024 * 1024 * 1024LU)
+#define NUM_DIRTY_PAGES 10
 
 int fd = 0;
 char* mapped_data = NULL;
@@ -44,10 +47,26 @@ void delete_file() {
   close(fd);
 }
 
+void create_dirty_pages(int num_pages) {
+  // Fill the pages with data to make them dirty
+  for (int i = 0; i < num_pages; ++i) {
+    memset(mapped_data + i * PAGE_SIZE, i, PAGE_SIZE);
+  }
+    
+  // Access each page to make them resident in memory
+  for (int i = 0; i < num_pages; ++i) {
+    volatile char value = mapped_data[i * PAGE_SIZE];
+    (void)value; // Avoid compiler optimizations for the unused variable
+  }
+}
+
 int main() {
   create_file();
-  // create a new file
+  DirtyPages *dpages = new DirtyPages();
+
+  create_dirty_pages(NUM_DIRTY_PAGES);
+  dpages->print_dirty_pages();
+
   delete_file();
   return 0;
 }
-

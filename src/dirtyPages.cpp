@@ -1,4 +1,5 @@
 #include "dirtyPages.hpp"
+#include <pwd.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,6 +80,10 @@ void DirtyPages::get_virtual_addr_range(void) {
   }
 }
 
+// The pagemap format specifies that for each page, there is a 64-bit entry in
+// /proc/<PID>/pagemap, with the lower 54 bits indicating the page frame number
+// (PFN). To get this PFN, we first seek to the correct position, then we read
+// 64 bits and extract the PFN from it
 void DirtyPages::print_dirty_pages(void) {
   char pagemap_path[LEN];
   snprintf(pagemap_path, sizeof(pagemap_path), "/proc/%d/pagemap", pid);
@@ -94,8 +99,17 @@ void DirtyPages::print_dirty_pages(void) {
 
   // Read corresponding pagemap entries
   for (size_t i = 0; i < num_pages; ++i) {
-    unsigned long long offset = (start_virt_addr / PAGE_SIZE + i) * sizeof(uint64_t);
-    lseek(pagemap_fd, offset, SEEK_SET);
+    unsigned long long page_index = start_virt_addr / PAGE_SIZE + i;
+    // Each entry in pagemap is 64 bits, i.e, 8 bytes.
+    unsigned long long offset = page_index * sizeof(uint64_t);
+    int res = lseek(pagemap_fd, offset, SEEK_SET);
+
+    if (res == -1) {
+      perror("Error seeking in pagemap file");
+      close(pagemap_fd);
+      return;
+    }
+
 
     uint64_t pagemap_entry;
     ssize_t read_size = read(pagemap_fd, &pagemap_entry, sizeof(pagemap_entry));
@@ -106,8 +120,19 @@ void DirtyPages::print_dirty_pages(void) {
       return;
     }
 
+    if (!is_page_in_dram(pagemap_entry)) {
+      continue;
+    }
+
+    // Create a mask that has ones in the lowest 54 bits, and use that to
+    // extract the PFN.
+    uint64_t pfn = get_page_frame_number(pagemap_entry);
+    printf("Pagemap entry = %lx\n", pagemap_entry);
+    printf("PFN = %lu\n", pfn);
+    uint64_t pf = get_pflags(pfn);
+
     // Check if the page is dirty
-    if (isPageDirty(pagemap_entry)) {
+    if (is_page_dirty(pf)) {
       printf("Page at address %llx is dirty.\n", start_virt_addr + i * PAGE_SIZE);
     }
   }
@@ -116,6 +141,42 @@ void DirtyPages::print_dirty_pages(void) {
 }
 
 // Function to check if a page is dirty
-bool DirtyPages::isPageDirty(unsigned long long pagemap_entry) {
-    return (pagemap_entry & (1ULL << 55)) != 0;
+bool DirtyPages::is_page_dirty(uint64_t page_flags) {
+  return (page_flags >> 4) & 0x1;
+}
+
+// Check if page is present (bit 63). Otherwise, there is no PFN.
+bool DirtyPages::is_page_in_dram(uint64_t page_info) {
+  return (page_info & (static_cast<uint64_t>(1) << 63));
+}
+
+// Create a mask that has ones in the lowest 54 bits, and use that to
+// extract the page frame number (PFN).
+uint64_t DirtyPages::get_page_frame_number(uint64_t page_info) {
+  return page_info & ((static_cast<uint64_t>(1) << 55) - 1);
+}
+  
+//  Having the page frame number (pfn) in hands, we can use that as index into
+//  /proc/kpageflags to get to our page’s flags. Each entry is 64 bits
+//  long, so we must skip ahead in 8-Byte-steps.
+uint64_t DirtyPages::get_pflags(uint64_t pfn) {
+  int fd = open("/proc/kpageflags", O_RDONLY);
+  if (fd == -1) {
+    perror("Error opening pagemap file");
+    return 0;
+  }
+    
+  lseek(fd, pfn * 8, SEEK_SET);
+
+  uint64_t pflags = 0;
+  ssize_t read_size = read(fd, &pflags, sizeof(pflags));
+    
+  if (read_size != sizeof(pflags)) {
+    fprintf(stderr, "Error reading pflag entry\n");
+    close(pflags);
+    return 0;
+  }
+
+  close(fd);
+  return pflags;
 }

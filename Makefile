@@ -1,5 +1,5 @@
 CC = g++
-CFLAGS = -Wall -g
+CFLAGS = -Wall -Werror -g
 SRC_DIR = src
 BUILD_DIR = build
 TARGET = example

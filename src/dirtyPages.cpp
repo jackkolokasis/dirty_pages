@@ -29,6 +29,7 @@ void DirtyPages::get_virtual_addr_range(void) {
   snprintf(maps_file, LEN, "/proc/%d/maps", pid);
 
   fd = fopen(maps_file, "r");
+
   if (fd == NULL) {
     perror("Error opening file");
     return;
@@ -124,6 +125,7 @@ void DirtyPages::print_dirty_pages(void) {
       continue;
     }
 
+#ifdef KFLAGS
     // Create a mask that has ones in the lowest 54 bits, and use that to
     // extract the PFN.
     uint64_t pfn = get_page_frame_number(pagemap_entry);
@@ -135,9 +137,20 @@ void DirtyPages::print_dirty_pages(void) {
     if (is_page_dirty(pf)) {
       printf("Page at address %llx is dirty.\n", start_virt_addr + i * PAGE_SIZE);
     }
+#else
+    // Check if the page is dirty
+    if (is_pte_dirty(pagemap_entry)) {
+      printf("Page at address %llx is dirty.\n", start_virt_addr + i * PAGE_SIZE);
+    }
+#endif
   }
 
   close(pagemap_fd);
+}
+  
+// Check if the page table entry is dirty
+bool DirtyPages::is_pte_dirty(uint64_t pagemap_entry) {
+  return (pagemap_entry >> 55) & 0x1;
 }
 
 // Function to check if a page is dirty

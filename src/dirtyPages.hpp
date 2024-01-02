@@ -15,6 +15,9 @@ private:
 
   // Check if the page is dirty
   bool is_page_dirty(uint64_t page_flags);
+  
+  // Check if the page table entry is dirty
+  bool is_pte_dirty(uint64_t pagemap_entry);
 
   // Open maps file to find the start and the end virtual address range of the
   // mapped file.

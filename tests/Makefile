@@ -1,5 +1,10 @@
-# This folder contains individual test files. Please write me a makefile that
-# will compile all of these files into individual executables.
+##############################################
+#
+# Author: 			Iacovos G. Kolokasis
+# Date:					2014-03-24
+# Description:	Makefile for the tests
+#
+#############################################
 
 TESTS = $(wildcard *.c)
 TESTS_EXE = $(patsubst %.c,%.exe,$(TESTS))

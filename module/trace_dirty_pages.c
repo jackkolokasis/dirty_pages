@@ -3,6 +3,8 @@
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
+#include <linux/mm.h>
+#include <linux/pagemap.h>
 
 /**
  * This line defines a unique magic number associated with the ioctl commands of
@@ -28,6 +30,52 @@ static dev_t dev_number;
 static struct cdev c_dev;
 static struct class *cl;            /* Global variable for the device class */
 
+// Write me a function that finds the vma area that contains the virtual address
+// passed as an argument. If the virtual address is not found, return NULL.
+// Hint: Use the find_vma() function.
+static long print_dirty_pages(unsigned long va_start, unsigned long va_end) {
+  struct vm_area_struct *vma;
+  struct file *file;
+  struct address_space *mapping;
+  unsigned long starting_offset, ending_offset;
+  struct page *page;
+
+  // Need a read lock to have a consistent view of the vma area data structure
+  mmap_read_lock(current->mm);
+  // while loop in case of madvise multiple vmas
+  vma = find_vma(current->mm, va_start);
+  if (vma == NULL) {
+    printk(KERN_INFO "find_vma_area: find_vma failed\n");
+    return -EFAULT;
+  }
+
+  printk(KERN_INFO "find_vma_area: %lu\n", vma->vm_start);
+  printk(KERN_INFO "find_vma_area: %lu\n", vma->vm_end);
+
+  // Page cache
+  file = vma->vm_file;
+  mapping = file->f_mapping;
+
+  // starting offset with linear_page_index
+  starting_offset = linear_page_index(vma, vma->vm_start);
+  ending_offset = linear_page_index(vma, vma->vm_end);
+
+  XA_STATE(xas, &mapping->i_pages, starting_offset);
+
+  rcu_read_lock();
+  // virtual addresses -> physical pages
+  xas_for_each_marked(&xas, page, ending_offset, PAGECACHE_TAG_DIRTY) {
+    printk(KERN_INFO "device offset: %lu\n", page->index);
+
+    //dirty_virtual_address = (page->index - 0) << PAGE_SHIFT + vma->vm_start;
+  }
+
+  rcu_read_unlock();
+  mmap_read_unlock(current->mm);
+
+  return 0;
+}
+
 static long trace_dirty_pages_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
   unsigned long va_array[2];
@@ -38,8 +86,13 @@ static long trace_dirty_pages_ioctl(struct file *file, unsigned int cmd, unsigne
         printk(KERN_INFO "trace_dirty_pages_ioctl: copy_from_user failed\n");
         return -EFAULT;
       }
-
+      
       printk(KERN_INFO "trace_dirty_pages_ioctl: %lu %lu\n", va_array[0], va_array[1]);
+
+      if (print_dirty_pages(va_array[0], va_array[1])) {
+        printk(KERN_INFO "trace_dirty_pages_ioctl: print_dirty_pages failed\n");
+        return -EFAULT;
+      }
       break;
     default:
       return -ENOTTY;
@@ -85,6 +138,7 @@ int trace_dirty_pages_init(void)
     return -1;
   }
 
+  printk(KERN_INFO "trace_dirty_pages_init: Module has been loaded!\n");
   return 0;
 }
 
@@ -96,7 +150,7 @@ void trace_dirty_pages_exit(void)
   class_destroy(cl);
   unregister_chrdev_region(dev_number, MY_MAX_MINORS);
 
-  printk(KERN_INFO "trace_dirty_pages_exit\n");
+  printk(KERN_INFO "trace_dirty_pages_exit: Module has been removed!\n");
 }
 
 module_init(trace_dirty_pages_init);

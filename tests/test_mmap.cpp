@@ -1,0 +1,99 @@
+#include <iostream>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <cstdlib>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+
+#define TRACE_DIRTY_PAGES_MAGIC 'T'
+#define TRACE_DIRTY_PAGES _IOW(TRACE_DIRTY_PAGES_MAGIC, 1, unsigned long[2])
+
+#define FILE_NAME "/mnt/fmap/file.txt"
+#define FILE_SIZE (2 * 1024 * 1024 * 1024LU)
+#define PAGE_SIZE 4096
+#define NUM_DIRTY_PAGES 10
+
+int fd = 0;
+char* mapped_data = NULL;
+unsigned long start_address, end_address;
+
+void create_file() {
+  // Create a file and open it for read and write
+  fd = open(FILE_NAME, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+  if (fd == -1) {
+    std::cerr << "Error opening file." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
+  // Allocate space for the file using posix_fallocate
+  if (posix_fallocate(fd, 0, FILE_SIZE) != 0) {
+    std::cerr << "Error allocating space for the file." << std::endl;
+    close(fd);
+    exit(EXIT_FAILURE);
+  }
+
+  // Map the file into memory
+  mapped_data = (char *) mmap(nullptr, FILE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (mapped_data == MAP_FAILED) {
+    std::cerr << "Error mapping file into memory." << std::endl;
+    close(fd);
+    exit(EXIT_FAILURE);
+  }
+
+  start_address = (unsigned long) mapped_data;
+  end_address = start_address + FILE_SIZE;
+}
+
+void delete_file() {
+  // Unmap the file from memory
+  if (munmap(mapped_data, FILE_SIZE) == -1) {
+    std::cerr << "Error unmapping file from memory." << std::endl;
+  }
+
+  // Close the file
+  close(fd);
+}
+
+void create_dirty_pages(int num_pages) {
+  // Fill the pages with data to make them dirty
+  for (int i = 0; i < num_pages; ++i) {
+    memset(mapped_data + i * PAGE_SIZE, i, PAGE_SIZE);
+  }
+    
+  // Access each page to make them resident in memory
+  for (int i = 0; i < num_pages; ++i) {
+    volatile char value = mapped_data[i * PAGE_SIZE];
+    (void)value; // Avoid compiler optimizations for the unused variable
+  }
+}
+
+int main() {
+  create_file();
+  create_dirty_pages(NUM_DIRTY_PAGES);
+
+  int trace_fd = open("/dev/trace_dirty_pages", O_RDWR);
+  if (trace_fd < 0) {
+    perror("Failed to open /dev/virtual_address");
+    exit(EXIT_FAILURE);
+  }
+  /* Example virtual addresses */
+  unsigned long va_array[2];
+
+  va_array[0] = start_address;
+  va_array[1] = end_address;
+
+  /* Request virtual addresses from the kernel */
+  if (ioctl(trace_fd, TRACE_DIRTY_PAGES, va_array) < 0) {
+    perror("IOCTL VIRT_ADDR_GET failed");
+    close(trace_fd);
+    exit(EXIT_FAILURE);
+  }
+
+  close(trace_fd); /* Close file */
+
+  delete_file();
+  return 0;
+}

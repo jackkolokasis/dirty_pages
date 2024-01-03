@@ -26,12 +26,11 @@
 
 static dev_t dev_number;
 static struct cdev c_dev;
-static struct class *cl;                    /* Global variable for the device class */
+static struct class *cl;            /* Global variable for the device class */
 
 static long trace_dirty_pages_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
   unsigned long va_array[2];
-  printk(KERN_INFO "trace_dirty_pages_ioctl\n");
 
   switch(cmd) {
     case TRACE_DIRTY_PAGES:

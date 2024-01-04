@@ -30,15 +30,16 @@ static dev_t dev_number;
 static struct cdev c_dev;
 static struct class *cl;            /* Global variable for the device class */
 
-// Write me a function that finds the vma area that contains the virtual address
-// passed as an argument. If the virtual address is not found, return NULL.
-// Hint: Use the find_vma() function.
+// This function is used to print dirty pages of a process
+// va_start: starting virtual address
+// va_end: ending virtual address
+// return: 0 if success, -EFAULT if failed
 static long print_dirty_pages(unsigned long va_start, unsigned long va_end) {
-  struct vm_area_struct *vma;
-  struct file *file;
   struct address_space *mapping;
-  unsigned long starting_offset, ending_offset;
+  struct file *file;
   struct page *page;
+  struct vm_area_struct *vma;
+  unsigned long starting_offset, ending_offset;
 
   // Need a read lock to have a consistent view of the vma area data structure
   mmap_read_lock(current->mm);
@@ -48,9 +49,6 @@ static long print_dirty_pages(unsigned long va_start, unsigned long va_end) {
     printk(KERN_INFO "find_vma_area: find_vma failed\n");
     return -EFAULT;
   }
-
-  printk(KERN_INFO "find_vma_area: %lu\n", vma->vm_start);
-  printk(KERN_INFO "find_vma_area: %lu\n", vma->vm_end);
 
   // Page cache
   file = vma->vm_file;
@@ -65,9 +63,9 @@ static long print_dirty_pages(unsigned long va_start, unsigned long va_end) {
   rcu_read_lock();
   // virtual addresses -> physical pages
   xas_for_each_marked(&xas, page, ending_offset, PAGECACHE_TAG_DIRTY) {
+    unsigned long dirty_virtual_address = ((page->index - 0) << PAGE_SHIFT) + vma->vm_start;
     printk(KERN_INFO "device offset: %lu\n", page->index);
-
-    //dirty_virtual_address = (page->index - 0) << PAGE_SHIFT + vma->vm_start;
+    printk(KERN_INFO "dirty virtual address: 0x%lx\n", dirty_virtual_address);
   }
 
   rcu_read_unlock();

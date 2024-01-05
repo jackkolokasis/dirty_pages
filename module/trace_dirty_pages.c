@@ -23,8 +23,15 @@
  * The _IOW macro is a helper macro that constructs an ioctl command number
  * based on the provided parameters.
  */
-#define TRACE_DIRTY_PAGES _IOW(TRACE_DIRTY_PAGES_MAGIC, 1, unsigned long[2])
+#define TRACE_DIRTY_PAGES _IOW(TRACE_DIRTY_PAGES_MAGIC, 1, struct ioctl_data)
 #define MY_MAX_MINORS  1
+
+struct ioctl_data {
+  unsigned long va_start;
+  unsigned long va_end;
+  unsigned long *pages;
+  size_t array_size;
+};
 
 static dev_t dev_number;
 static struct cdev c_dev;
@@ -61,7 +68,6 @@ static long print_dirty_pages(unsigned long va_start, unsigned long va_end) {
   XA_STATE(xas, &mapping->i_pages, starting_offset);
 
   rcu_read_lock();
-  // virtual addresses -> physical pages
   xas_for_each_marked(&xas, page, ending_offset, PAGECACHE_TAG_DIRTY) {
     unsigned long dirty_virtual_address = ((page->index - 0) << PAGE_SHIFT) + vma->vm_start;
     printk(KERN_INFO "device offset: %lu\n", page->index);
@@ -76,21 +82,54 @@ static long print_dirty_pages(unsigned long va_start, unsigned long va_end) {
 
 static long trace_dirty_pages_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-  unsigned long va_array[2];
+  struct ioctl_data data;
 
   switch(cmd) {
     case TRACE_DIRTY_PAGES:
-      if (copy_from_user(va_array, (unsigned long *)arg, sizeof(va_array))) {
+      if (copy_from_user(&data, (unsigned long *)arg, sizeof(struct ioctl_data))) {
         printk(KERN_INFO "trace_dirty_pages_ioctl: copy_from_user failed\n");
         return -EFAULT;
       }
       
-      printk(KERN_INFO "trace_dirty_pages_ioctl: %lu %lu\n", va_array[0], va_array[1]);
-
-      if (print_dirty_pages(va_array[0], va_array[1])) {
-        printk(KERN_INFO "trace_dirty_pages_ioctl: print_dirty_pages failed\n");
+      if (data.array_size == 0 || data.array_size > SIZE_MAX / sizeof(unsigned long)) {
+        printk(KERN_INFO "trace_dirty_pages_ioctl: array_size is 0\n");
         return -EFAULT;
       }
+
+      printk(KERN_INFO "trace_dirty_pages_ioctl: va_start: %lu\n", data.va_start);
+      printk(KERN_INFO "trace_dirty_pages_ioctl: va_end: %lu\n", data.va_end);
+      printk(KERN_INFO "trace_dirty_pages_ioctl: array_size: %lu\n", data.array_size);
+
+      // allocate memory for pages
+      unsigned long * my_pages = kmalloc(data.array_size * sizeof(unsigned long), GFP_KERNEL);
+
+      if (my_pages == NULL) {
+        printk(KERN_INFO "trace_dirty_pages_ioctl: kmalloc failed\n");
+        return -EFAULT;
+      }
+
+      // fill the array with a pattern for testing
+      for (size_t i = 0; i < data.array_size; i++) {
+        my_pages[i] = i;
+      }
+
+      // copy the array to user space
+      if (copy_to_user(data.pages, my_pages, 10 * sizeof(unsigned long))) {
+        // free the allocated memory
+        kfree(my_pages);
+        printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
+        return -EFAULT;
+      }
+
+      // free the allocated memory
+      kfree(my_pages);
+
+      //printk(KERN_INFO "trace_dirty_pages_ioctl: %lu %lu\n", va_array[0], va_array[1]);
+
+      //if (print_dirty_pages(va_array[0], va_array[1])) {
+      //  printk(KERN_INFO "trace_dirty_pages_ioctl: print_dirty_pages failed\n");
+      //  return -EFAULT;
+      //}
       break;
     default:
       return -ENOTTY;

@@ -9,7 +9,7 @@
 #include <sys/ioctl.h>
 
 #define TRACE_DIRTY_PAGES_MAGIC 'T'
-#define TRACE_DIRTY_PAGES _IOW(TRACE_DIRTY_PAGES_MAGIC, 1, unsigned long[2])
+#define TRACE_DIRTY_PAGES _IOW(TRACE_DIRTY_PAGES_MAGIC, 1, struct ioctl_data)
 
 #define FILE_NAME "/mnt/fmap/file.txt"
 #define FILE_SIZE (2 * 1024 * 1024 * 1024LU)
@@ -19,6 +19,13 @@
 int fd = 0;
 char* mapped_data = NULL;
 unsigned long start_address, end_address;
+
+struct ioctl_data {
+  unsigned long start_address;    //< Start virtual address of mmaped space
+  unsigned long end_address;      //< End virtual address of mmaped space
+  unsigned long *page_array;      //< Page array to be filled by the kernel
+  size_t page_array_size;         //< Size of the page array
+};
 
 void create_file() {
   // Create a file and open it for read and write
@@ -43,6 +50,7 @@ void create_file() {
     exit(EXIT_FAILURE);
   }
 
+  printf("mapped_data = %p\n", mapped_data);
   start_address = (unsigned long) mapped_data;
   end_address = start_address + FILE_SIZE;
 }
@@ -79,17 +87,30 @@ int main() {
     perror("Failed to open /dev/virtual_address");
     exit(EXIT_FAILURE);
   }
-  /* Example virtual addresses */
-  unsigned long va_array[2];
 
-  va_array[0] = start_address;
-  va_array[1] = end_address;
+  struct ioctl_data data;
+  // Initialize the struct with data
+  data.start_address = start_address;
+  data.end_address = end_address;
+  data.page_array_size = NUM_DIRTY_PAGES;
+  data.page_array = (unsigned long *) calloc(data.page_array_size, sizeof(unsigned long));
+
+  if (data.page_array == NULL) {
+    perror("Failed to allocate memory for page array");
+    close(trace_fd);
+    exit(EXIT_FAILURE);
+  }
 
   /* Request virtual addresses from the kernel */
-  if (ioctl(trace_fd, TRACE_DIRTY_PAGES, va_array) < 0) {
+  if (ioctl(trace_fd, TRACE_DIRTY_PAGES, &data) < 0) {
     perror("IOCTL VIRT_ADDR_GET failed");
     close(trace_fd);
     exit(EXIT_FAILURE);
+  }
+
+  // print filled arrray
+  for (size_t i = 0; i < data.page_array_size; ++i) {
+    printf("data.page_array[%lu] = %lu\n", i, data.page_array[i]);
   }
 
   close(trace_fd); /* Close file */

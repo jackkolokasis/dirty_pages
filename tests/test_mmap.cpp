@@ -110,7 +110,8 @@ int main() {
 
   // print filled arrray
   for (size_t i = 0; i < data.page_array_size; ++i) {
-    printf("data.page_array[%lu] = %lu\n", i, data.page_array[i]);
+    //print unsigned long as address in hex
+    printf("data.page_array[%lu] = 0x%lx\n", i, data.page_array[i]);
   }
 
   close(trace_fd); /* Close file */

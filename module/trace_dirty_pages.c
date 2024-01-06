@@ -41,12 +41,15 @@ static struct class *cl;            /* Global variable for the device class */
 // va_start: starting virtual address
 // va_end: ending virtual address
 // return: 0 if success, -EFAULT if failed
-static long print_dirty_pages(unsigned long va_start, unsigned long va_end) {
+static long print_dirty_pages(unsigned long va_start, unsigned long va_end,
+                              unsigned long *dirty_page_array, size_t array_size) 
+{
   struct address_space *mapping;
   struct file *file;
   struct page *page;
   struct vm_area_struct *vma;
   unsigned long starting_offset, ending_offset;
+  size_t i = 0;
 
   // Need a read lock to have a consistent view of the vma area data structure
   mmap_read_lock(current->mm);
@@ -72,6 +75,12 @@ static long print_dirty_pages(unsigned long va_start, unsigned long va_end) {
     unsigned long dirty_virtual_address = ((page->index - 0) << PAGE_SHIFT) + vma->vm_start;
     printk(KERN_INFO "device offset: %lu\n", page->index);
     printk(KERN_INFO "dirty virtual address: 0x%lx\n", dirty_virtual_address);
+    if (i == array_size) {
+      rcu_read_unlock();
+      mmap_read_unlock(current->mm);
+      return -EFAULT;
+    }
+    dirty_page_array[i++] = dirty_virtual_address;
   }
 
   rcu_read_unlock();
@@ -101,20 +110,22 @@ static long trace_dirty_pages_ioctl(struct file *file, unsigned int cmd, unsigne
       printk(KERN_INFO "trace_dirty_pages_ioctl: array_size: %lu\n", data.array_size);
 
       // allocate memory for pages
-      unsigned long * my_pages = kmalloc(data.array_size * sizeof(unsigned long), GFP_KERNEL);
+      unsigned long *my_pages = kcalloc(data.array_size, sizeof(unsigned long), GFP_KERNEL);
 
       if (my_pages == NULL) {
         printk(KERN_INFO "trace_dirty_pages_ioctl: kmalloc failed\n");
         return -EFAULT;
       }
-
-      // fill the array with a pattern for testing
-      for (size_t i = 0; i < data.array_size; i++) {
-        my_pages[i] = i;
+      
+      if (print_dirty_pages(data.va_start, data.va_end, my_pages, data.array_size)) {
+        printk(KERN_INFO "trace_dirty_pages_ioctl: print_dirty_pages failed\n");
+        // free the allocated memory
+        kfree(my_pages);
+        return -EFAULT;
       }
 
       // copy the array to user space
-      if (copy_to_user(data.pages, my_pages, 10 * sizeof(unsigned long))) {
+      if (copy_to_user(data.pages, my_pages, data.array_size * sizeof(unsigned long))) {
         // free the allocated memory
         kfree(my_pages);
         printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
@@ -124,12 +135,6 @@ static long trace_dirty_pages_ioctl(struct file *file, unsigned int cmd, unsigne
       // free the allocated memory
       kfree(my_pages);
 
-      //printk(KERN_INFO "trace_dirty_pages_ioctl: %lu %lu\n", va_array[0], va_array[1]);
-
-      //if (print_dirty_pages(va_array[0], va_array[1])) {
-      //  printk(KERN_INFO "trace_dirty_pages_ioctl: print_dirty_pages failed\n");
-      //  return -EFAULT;
-      //}
       break;
     default:
       return -ENOTTY;

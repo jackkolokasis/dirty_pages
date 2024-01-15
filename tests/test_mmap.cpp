@@ -14,7 +14,7 @@
 #define FILE_NAME "/mnt/fmap/file.txt"
 #define FILE_SIZE (2 * 1024 * 1024 * 1024LU)
 #define PAGE_SIZE 4096
-#define NUM_DIRTY_PAGES 10
+#define NUM_DIRTY_PAGES 262144
 
 int fd = 0;
 char* mapped_data = NULL;
@@ -109,7 +109,7 @@ int main() {
   }
 
   // print filled arrray
-  for (size_t i = 0; i < data.page_array_size; ++i) {
+  for (size_t i = 0; i < data.page_array_size && data.page_array[i] != 0; ++i) {
     //print unsigned long as address in hex
     printf("data.page_array[%lu] = 0x%lx\n", i, data.page_array[i]);
   }

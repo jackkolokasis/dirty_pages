@@ -5,6 +5,8 @@
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
+  
+unsigned long *my_pages = NULL;
 
 /**
  * This line defines a unique magic number associated with the ioctl commands of
@@ -42,14 +44,19 @@ static struct class *cl;            /* Global variable for the device class */
 // va_end: ending virtual address
 // return: 0 if success, -EFAULT if failed
 static long print_dirty_pages(unsigned long va_start, unsigned long va_end,
-                              unsigned long *dirty_page_array, size_t array_size) 
+                              size_t array_size, struct ioctl_data data) 
 {
   struct address_space *mapping;
   struct file *file;
   struct page *page;
   struct vm_area_struct *vma;
   unsigned long starting_offset, ending_offset;
+  //unsigned long i = 0;
   size_t i = 0;
+  size_t count = 0;
+  size_t num_pages = 0;
+
+  memset(my_pages, 0, 512 * sizeof(unsigned long));
 
   // Need a read lock to have a consistent view of the vma area data structure
   mmap_read_lock(current->mm);
@@ -73,18 +80,49 @@ static long print_dirty_pages(unsigned long va_start, unsigned long va_end,
   rcu_read_lock();
   xas_for_each_marked(&xas, page, ending_offset, PAGECACHE_TAG_DIRTY) {
     unsigned long dirty_virtual_address = ((page->index - 0) << PAGE_SHIFT) + vma->vm_start;
-    printk(KERN_INFO "device offset: %lu\n", page->index);
-    printk(KERN_INFO "dirty virtual address: 0x%lx\n", dirty_virtual_address);
-    if (i == array_size) {
+    //printk(KERN_INFO "device offset: %lu\n", page->index);
+    //printk(KERN_INFO "dirty virtual address: 0x%lx\n", dirty_virtual_address);
+    //i++;
+    if (num_pages == array_size) {
       rcu_read_unlock();
       mmap_read_unlock(current->mm);
       return -EFAULT;
     }
-    dirty_page_array[i++] = dirty_virtual_address;
+
+    if (i == 512) {
+      if (copy_to_user(data.pages + (count * 512), my_pages, 512 * sizeof(unsigned long))) {
+        printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
+        return -EFAULT;
+      }
+      printk(KERN_INFO "Here1 | NUM pages = %lu | Count = %ld\n", num_pages, count);
+      memset(my_pages, 0, 512 * sizeof(unsigned long));
+      i = 0;
+      count++;
+    }
+
+    my_pages[i] = dirty_virtual_address;
+    i++;
+    num_pages++;
   }
 
   rcu_read_unlock();
   mmap_read_unlock(current->mm);
+
+  //my_pages[0] = i;
+    
+  //if (copy_to_user(data.pages, my_pages, 512 * sizeof(unsigned long))) {
+  //  printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
+  //  return -EFAULT;
+  //}
+
+
+  if (i != 0 && (count * 512 + 512) < array_size) {
+    printk(KERN_INFO "Here | NUM pages = %lu\n", num_pages);
+    if (copy_to_user(data.pages + (count * 512), my_pages, 512 * sizeof(unsigned long))) {
+      printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
+      return -EFAULT;
+    }
+  }
 
   return 0;
 }
@@ -105,35 +143,27 @@ static long trace_dirty_pages_ioctl(struct file *file, unsigned int cmd, unsigne
         return -EFAULT;
       }
 
-      printk(KERN_INFO "trace_dirty_pages_ioctl: va_start: %lu\n", data.va_start);
-      printk(KERN_INFO "trace_dirty_pages_ioctl: va_end: %lu\n", data.va_end);
-      printk(KERN_INFO "trace_dirty_pages_ioctl: array_size: %lu\n", data.array_size);
+      //printk(KERN_INFO "trace_dirty_pages_ioctl: va_start: %lu\n", data.va_start);
+      //printk(KERN_INFO "trace_dirty_pages_ioctl: va_end: %lu\n", data.va_end);
+      //printk(KERN_INFO "trace_dirty_pages_ioctl: array_size: %lu\n", data.array_size);
 
-      // allocate memory for pages
-      unsigned long *my_pages = kcalloc(data.array_size, sizeof(unsigned long), GFP_KERNEL);
-
-      if (my_pages == NULL) {
-        printk(KERN_INFO "trace_dirty_pages_ioctl: kmalloc failed\n");
-        return -EFAULT;
-      }
-      
-      if (print_dirty_pages(data.va_start, data.va_end, my_pages, data.array_size)) {
+      if (print_dirty_pages(data.va_start, data.va_end, data.array_size, data)) {
         printk(KERN_INFO "trace_dirty_pages_ioctl: print_dirty_pages failed\n");
         // free the allocated memory
-        kfree(my_pages);
+        //kfree(my_pages);
         return -EFAULT;
       }
 
-      // copy the array to user space
-      if (copy_to_user(data.pages, my_pages, data.array_size * sizeof(unsigned long))) {
-        // free the allocated memory
-        kfree(my_pages);
-        printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
-        return -EFAULT;
-      }
+      //// copy the array to user space
+      //if (copy_to_user(data.pages, my_pages, data.array_size * sizeof(unsigned long))) {
+      //  // free the allocated memory
+      //  kfree(my_pages);
+      //  printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
+      //  return -EFAULT;
+      //}
 
       // free the allocated memory
-      kfree(my_pages);
+      //kfree(my_pages);
 
       break;
     default:
@@ -157,7 +187,7 @@ int trace_dirty_pages_init(void)
     return err;
   }
 
-  if ((cl = class_create("chardev")) == NULL) {
+  if ((cl = class_create(THIS_MODULE, "chardev")) == NULL) {
     printk(KERN_INFO "trace_dirty_pages_init: class_create failed\n");
     unregister_chrdev_region(dev_number, MY_MAX_MINORS);
     return -1;
@@ -180,13 +210,23 @@ int trace_dirty_pages_init(void)
     return -1;
   }
 
+  // We allocate an array of 512 indices which indicates 512 pages
+  // 512 * 8 bytes = 4096 = 4KB = 1 physical page
+  my_pages = kcalloc(512, sizeof(unsigned long), GFP_KERNEL);
+
+  if (my_pages == NULL) {
+    printk(KERN_INFO "trace_dirty_pages_ioctl: kcalloc failed\n");
+    return -EFAULT;
+  }
+
   printk(KERN_INFO "trace_dirty_pages_init: Module has been loaded!\n");
   return 0;
 }
 
 void trace_dirty_pages_exit(void)
 {
-  // unload kernel module
+  // free the allocated memory
+  kfree(my_pages);
   cdev_del(&c_dev);
   device_destroy(cl, dev_number);
   class_destroy(cl);

@@ -12,14 +12,14 @@ TARGET = trace_dirty_pages
 obj-m += $(TARGET).o
 
 all:
-	bear -- make -C /lib/modules/6.5.0-14-generic/build M=$(PWD) modules && \
-		cd .. && compdb -p module list > compile_commands.json && mv compile_commands.json module
+	make -C /lib/modules/6.1.68/build M=$(PWD) modules
 
 clean:
-	make -C /lib/modules/6.5.0-14-generic/build M=$(PWD) clean
+	make -C /lib/modules/6.1.68/build M=$(PWD) clean
 
 load:
-	sudo insmod $(TARGET).ko
+	sudo insmod $(TARGET).ko && \
+		sudo chown -R kolokasis /dev/trace_dirty_pages
 
 unload:
 	sudo rmmod $(TARGET)

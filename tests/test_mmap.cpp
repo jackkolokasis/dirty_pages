@@ -25,6 +25,7 @@ struct ioctl_data {
   unsigned long end_address;      //< End virtual address of mmaped space
   unsigned long *page_array;      //< Page array to be filled by the kernel
   size_t page_array_size;         //< Size of the page array
+  unsigned long *num_dirty_pages;  //< Number of dirty pages
 };
 
 void create_file() {
@@ -94,6 +95,7 @@ int main() {
   data.end_address = end_address;
   data.page_array_size = NUM_DIRTY_PAGES;
   data.page_array = (unsigned long *) calloc(data.page_array_size, sizeof(unsigned long));
+  data.num_dirty_pages = (unsigned long *) calloc(1, sizeof(unsigned long));
 
   if (data.page_array == NULL) {
     perror("Failed to allocate memory for page array");
@@ -113,6 +115,8 @@ int main() {
     //print unsigned long as address in hex
     printf("data.page_array[%lu] = 0x%lx\n", i, data.page_array[i]);
   }
+
+  printf("data.num_dirty_pages = %lu\n", *data.num_dirty_pages);
 
   close(trace_fd); /* Close file */
 

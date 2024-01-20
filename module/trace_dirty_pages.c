@@ -33,6 +33,7 @@ struct ioctl_data {
   unsigned long va_end;
   unsigned long *pages;
   size_t array_size;
+  unsigned long *num_dirty_pages;
 };
 
 static dev_t dev_number;
@@ -80,9 +81,6 @@ static long print_dirty_pages(unsigned long va_start, unsigned long va_end,
   rcu_read_lock();
   xas_for_each_marked(&xas, page, ending_offset, PAGECACHE_TAG_DIRTY) {
     unsigned long dirty_virtual_address = ((page->index - 0) << PAGE_SHIFT) + vma->vm_start;
-    //printk(KERN_INFO "device offset: %lu\n", page->index);
-    //printk(KERN_INFO "dirty virtual address: 0x%lx\n", dirty_virtual_address);
-    //i++;
     if (num_pages == array_size) {
       rcu_read_unlock();
       mmap_read_unlock(current->mm);
@@ -108,20 +106,16 @@ static long print_dirty_pages(unsigned long va_start, unsigned long va_end,
   rcu_read_unlock();
   mmap_read_unlock(current->mm);
 
-  //my_pages[0] = i;
-    
-  //if (copy_to_user(data.pages, my_pages, 512 * sizeof(unsigned long))) {
-  //  printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
-  //  return -EFAULT;
-  //}
-
-
   if (i != 0 && (count * 512 + 512) < array_size) {
-    printk(KERN_INFO "Here | NUM pages = %lu\n", num_pages);
     if (copy_to_user(data.pages + (count * 512), my_pages, 512 * sizeof(unsigned long))) {
       printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
       return -EFAULT;
     }
+  }
+    
+  if (copy_to_user(data.num_dirty_pages, &num_pages, sizeof(unsigned long))) {
+    printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
+    return -EFAULT;
   }
 
   return 0;
@@ -143,27 +137,12 @@ static long trace_dirty_pages_ioctl(struct file *file, unsigned int cmd, unsigne
         return -EFAULT;
       }
 
-      //printk(KERN_INFO "trace_dirty_pages_ioctl: va_start: %lu\n", data.va_start);
-      //printk(KERN_INFO "trace_dirty_pages_ioctl: va_end: %lu\n", data.va_end);
-      //printk(KERN_INFO "trace_dirty_pages_ioctl: array_size: %lu\n", data.array_size);
-
       if (print_dirty_pages(data.va_start, data.va_end, data.array_size, data)) {
         printk(KERN_INFO "trace_dirty_pages_ioctl: print_dirty_pages failed\n");
         // free the allocated memory
         //kfree(my_pages);
         return -EFAULT;
       }
-
-      //// copy the array to user space
-      //if (copy_to_user(data.pages, my_pages, data.array_size * sizeof(unsigned long))) {
-      //  // free the allocated memory
-      //  kfree(my_pages);
-      //  printk(KERN_INFO "trace_dirty_pages_ioctl: copy_to_user failed\n");
-      //  return -EFAULT;
-      //}
-
-      // free the allocated memory
-      //kfree(my_pages);
 
       break;
     default:

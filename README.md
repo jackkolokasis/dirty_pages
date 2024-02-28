@@ -31,3 +31,7 @@ cd tests
 make
 ./example <filename> <size> <num_dirty_pages>
 ```
+
+## Limitations
+We do not support at this time in the kernel module the use of
+madvise. Madvise splits the vma area so we do not handle this case
